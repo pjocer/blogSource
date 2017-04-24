@@ -477,9 +477,227 @@ hasDependency这个变量是代表是否有dependencyBlock。这个函数里面�
 
 先来看看平时我们很熟悉的情况——积极运算。
 
-![EAGER BEAVER]()
+![EAGER BEAVER](https://github.com/pjocer/blogSource/blob/master/RAC-API%E4%B8%AA%E4%BA%BA%E6%80%BB%E7%BB%93-%E4%BA%8C/eager_beaver.png?raw=true)
 
-在RACSequence中积极运算的代表是RACSequence的一个子类RACArraySequence的子类——RACEagerSequence。它的积极运算表现在其bind函数上。
+在RACSequence中**积极运算**的代表是RACSequence的一个子类RACArraySequence的子类——RACEagerSequence。它的积极运算表现在其bind函数上。
+
+```
+- (instancetype)bind:(RACStreamBindBlock (^)(void))block {
+    NSCParameterAssert(block != nil);
+    RACStreamBindBlock bindBlock = block();
+    NSArray *currentArray = self.array;
+    NSMutableArray *resultArray = [NSMutableArray arrayWithCapacity:currentArray.count];
+
+    for (id value in currentArray) {
+        BOOL stop = NO;
+        RACSequence *boundValue = (id)bindBlock(value, &stop);
+        if (boundValue == nil) break;
+
+        for (id x in boundValue) {
+            [resultArray addObject:x];
+        }
+
+        if (stop) break;
+    }
+
+    return [[self.class sequenceWithArray:resultArray offset:0] setNameWithFormat:@"[%@] -bind:", self.name];
+}
+```
+
+从上述代码中能看到主要是进行了2层循环，最外层循环遍历的自己RACSequence中的值，然后拿到这个值传入闭包bindBlock( )中，返回一个RACSequence，最后用一个NSMutableArray依次把每个RACSequence里面的值都装起来。
+
+第二个for-in循环是在遍历RACSequence，之所以可以用for-in的方式遍历就是因为实现了NSFastEnumeration协议，实现了countByEnumeratingWithState: objects: count: 方法，这个方法在上面详细分析过了，这里不再赘述。
+
+这里就是一个积极运算的例子，在每次循环中都会把闭包block( )的值计算出来。值得说明的是，最后返回的RACSequence的类型是self.class类型的，即还是RACEagerSequence类型的。
+
+再来看看RACSequence中的**惰性求值**是怎么实现的。
+
+在RACSequence中，bind函数是下面这个样子：
+
+```
+- (instancetype)bind:(RACStreamBindBlock (^)(void))block {
+    RACStreamBindBlock bindBlock = block();
+    return [[self bind:bindBlock passingThroughValuesFromSequence:nil] setNameWithFormat:@"[%@] -bind:", self.name];
+}
+```
+
+实际上调用了bind: passingThroughValuesFromSequence:方法，第二个入参传入nil。
+
+
+```
+- (instancetype)bind:(RACStreamBindBlock)bindBlock passingThroughValuesFromSequence:(RACSequence *)passthroughSequence {
+
+    __block RACSequence *valuesSeq = self;
+    __block RACSequence *current = passthroughSequence;
+    __block BOOL stop = NO;
+
+    RACSequence *sequence = [RACDynamicSequence sequenceWithLazyDependency:^ id {
+        // 暂时省略
+    } headBlock:^(id _) {
+        return current.head;
+    } tailBlock:^ id (id _) {
+        if (stop) return nil;
+        return [valuesSeq bind:bindBlock passingThroughValuesFromSequence:current.tail];
+    }];
+
+    sequence.name = self.name;
+    return sequence;
+}
+```
+
+在bind: passingThroughValuesFromSequence:方法的实现中，就是用sequenceWithLazyDependency: headBlock: tailBlock:方法生成了一个RACSequence，并返回。在sequenceWithLazyDependency: headBlock: tailBlock:上面分析过源码，主要目的是为了保存3个闭包，headBlock，tailBlock，dependencyBlock。
+
+通过调用RACSequence里面的bind操作，并没有执行3个闭包里面的值，只是保存起来了。这里就是惰性求值的表现——等到要用的时候才会计算。
+
+通过上述源码的分析，可以写出如下的测试代码加深理解。
+
+```
+NSArray *array = @[@1,@2,@3,@4,@5];
+
+    RACSequence *lazySequence = [array.rac_sequence map:^id(id value) {
+        NSLog(@"lazySequence");
+        return @(101);
+    }];
+
+    RACSequence *eagerSequence = [array.rac_sequence.eagerSequence map:^id(id value) {
+        NSLog(@"eagerSequence");
+        return @(100);
+    }];
+   	输出:eagerSequence
+	 	 eagerSequence
+		 eagerSequence
+		 eagerSequence
+		 eagerSequence
+```
+
+只输出了5遍eagerSequence，lazySequence并没有输出。原因是因为bind闭包只在eagerSequence中真正被调用执行了，而在lazySequence中bind闭包仅仅只是被copy了。
+
+那如何让lazySequence执行bind闭包呢？
+
+```
+    [lazySequence array];
+```
+
+通过执行上述代码，就可以输出5遍“lazySequence”了。因为bind闭包再次会被调用执行。
+
+**积极运算** 和 **惰性求值**在这里就区分出来了。在RACSequence中，除去RACEagerSequence只积极运算，其他的Sequence都是**惰性求值**的。
+
+接下来再继续分析RACSequence是如何实现**惰性求值**的。
+
+```
+RACSequence *sequence = [RACDynamicSequence sequenceWithLazyDependency:^ id {
+    while (current.head == nil) {
+        if (stop) return nil;
+
+        // 遍历当前sequence，取出下一个值
+        id value = valuesSeq.head;
+
+        if (value == nil) {
+            // 遍历完sequence所有的值
+            stop = YES;
+            return nil;
+        }
+
+        current = (id)bindBlock(value, &stop);
+        if (current == nil) {
+            stop = YES;
+            return nil;
+        }
+
+        valuesSeq = valuesSeq.tail;
+    }
+
+    NSCAssert([current isKindOfClass:RACSequence.class], @"-bind: block returned an object that is not a sequence: %@", current);
+    return nil;
+} headBlock:^(id _) {
+    return current.head;
+} tailBlock:^ id (id _) {
+    if (stop) return nil;
+
+    return [valuesSeq bind:bindBlock passingThroughValuesFromSequence:current.tail];
+}];
+```
+
+在bind操作中创建了这样一个lazySequence，3个block闭包保存了如何创建一个lazySequence的做法。
+
+headBlock是入参为id，返回值也是一个id。在创建lazySequence的head的时候，并不关心入参，直接返回passthroughSequence的head。
+
+tailBlock是入参为id，返回值为RACSequence。由于RACSequence的定义类似递归定义的，所以tailBlock会再次递归调用bind:passingThroughValuesFromSequence:产生一个RACSequence作为新的sequence的tail。
+
+dependencyBlock的返回值是作为headBlock和tailBlock的入参。不过现在headBlock和tailBlock都不关心这个入参。那么dependencyBlock就是成为了headBlock和tailBlock闭包执行之前要执行的闭包。
+
+dependencyBlock的目的是为了把原来的sequence里面的值，都进行一次变换。current是入参passthroughSequence，valuesSeq就是原sequence的引用。每次循环一次就取出原sequence的头，直到取不到为止，就是遍历完成。
+
+取出valuesSeq的head，传入bindBlock( )闭包进行变换，返回值是一个current 的sequence。在每次headBlock和tailBlock之前都会调用这个dependencyBlock，变换后新的sequence的head就是current的head，新的sequence的tail就是递归调用传入的current.tail。
+
+RACDynamicSequence创建的lazyDependency的过程就是保存了3个block的过程。那这些闭包什么时候会被调用呢？
+
+```
+- (id)head {
+    @synchronized (self) {
+        id untypedHeadBlock = self.headBlock;
+        if (untypedHeadBlock == nil) return _head;
+
+        if (self.hasDependency) {
+            if (self.dependencyBlock != nil) {
+                _dependency = self.dependencyBlock();
+                self.dependencyBlock = nil;
+            }
+
+            id (^headBlock)(id) = untypedHeadBlock;
+            _head = headBlock(_dependency);
+        } else {
+            id (^headBlock)(void) = untypedHeadBlock;
+            _head = headBlock();
+        }
+
+        self.headBlock = nil;
+        return _head;
+    }
+}
+```
+
+上面的源码就是获取RACDynamicSequence中head的实现。当要取出sequence的head的时候，就会调用headBlock( )。如果保存了dependencyBlock闭包，在执行headBlock( )之前会先执行dependencyBlock( )进行一次变换。
+
+```
+- (RACSequence *)tail {
+    @synchronized (self) {
+        id untypedTailBlock = self.tailBlock;
+        if (untypedTailBlock == nil) return _tail;
+
+        if (self.hasDependency) {
+            if (self.dependencyBlock != nil) {
+                _dependency = self.dependencyBlock();
+                self.dependencyBlock = nil;
+            }
+
+            RACSequence * (^tailBlock)(id) = untypedTailBlock;
+            _tail = tailBlock(_dependency);
+        } else {
+            RACSequence * (^tailBlock)(void) = untypedTailBlock;
+            _tail = tailBlock();
+        }
+
+        if (_tail.name == nil) _tail.name = self.name;
+
+        self.tailBlock = nil;
+        return _tail;
+    }
+}
+```
+
+获取RACDynamicSequence中tail的时候，和获取head是一样的，当需要取出tail的时候才会调用tailBlock( )。当有dependencyBlock闭包，会先执行dependencyBlock闭包，再调用tailBlock( )。
+
+#### 总结一下：
+RACSequence的惰性求值，除去RACEagerSequence的bind函数以外，其他所有的Sequence都是基于惰性求值的。只有到取出来运算之前才会去把相应的闭包执行一遍。
+
+在RACSequence所有函数中，只有bind函数会传入dependencyBlock( )闭包，（RACEagerSequence会重写这个bind函数），所以看到dependencyBlock( )闭包一定可以推断出是RACSequence做了变换操作了。
+
+
+
+
+
+
 
 
 
