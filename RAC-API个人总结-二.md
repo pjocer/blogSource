@@ -40,7 +40,7 @@ _backgroundScheduler是通过RACTargetQueueScheduler生成的，因此RACSubscri
 
 #### immediateScheduler
 
-```
+```objc
 + (instancetype)immediateScheduler {
     static dispatch_once_t onceToken;
     static RACScheduler *immediateScheduler;
@@ -53,7 +53,7 @@ _backgroundScheduler是通过RACTargetQueueScheduler生成的，因此RACSubscri
 可以看出immediateScheduler是一个单例类，因为immediateScheduler并没有用到CGD的相关操作，可以认为它是一个同步的调度器。
 
 #### mainThreadScheduler
-```
+```objc
 + (instancetype)mainThreadScheduler {
     static dispatch_once_t onceToken;
     static RACScheduler *mainThreadScheduler;
@@ -67,7 +67,7 @@ _backgroundScheduler是通过RACTargetQueueScheduler生成的，因此RACSubscri
 mainThreadScheduler也是单例类，看一下initWithName:targetQueue:的实现：
 
 
-```
+```objc
 - (id)initWithName:(NSString *)name targetQueue:(dispatch_queue_t)targetQueue {
     NSCParameterAssert(targetQueue != NULL);
     if (name == nil) {
@@ -89,7 +89,7 @@ dispatch_set_target_queue一般有两个作用：
 
 #### scheduler
 
-```
+```objc
 + (instancetype)scheduler {
     return [self schedulerWithPriority:RACSchedulerPriorityDefault];
 }
@@ -107,7 +107,7 @@ dispatch_set_target_queue一般有两个作用：
 
 RACScheduler定时的方法主要有两个：
 
-```
+```objc
 - (RACDisposable *)after:(NSDate *)date schedule:(void (^)(void))block {
     RACDisposable *disposable = [[RACDisposable alloc] init];
     dispatch_after([self.class wallTimeWithDate:date], self.queue, ^{
@@ -137,7 +137,7 @@ after:repeatingEvery:withLeeway:schedule:则是通过dispatch_source_t实现的�
 为什么要说scheduleRecursiveBlock？因为在RACSequence内部的很多操作都是通过scheduleRecursiveBlock来完成的，如果要理解RACSequence，那么理解scheduleRecursiveBlock必不可少。
 先说一个例子：
 
-```
+```objc
     NSMutableArray *numbers = [[NSMutableArray alloc] init];
     for (NSInteger i = 0; i < 3; i++) {
         [numbers addObject:[NSNumber numberWithInteger:i]];
@@ -153,7 +153,7 @@ after:repeatingEvery:withLeeway:schedule:则是通过dispatch_source_t实现的�
 
 RACSequence封装了集合的链式操作，用处是非常大的，下篇会结合几个例子说明RACSequence，下面先看源码：
 
-```
+```objc
 - (RACSignal *)signal {
     return [[self signalWithScheduler:[RACScheduler scheduler]] setNameWithFormat:@"[%@] -signal", self.name];
 }
@@ -218,7 +218,7 @@ RACScheduler的源码分析结束~~
 
 ## RACSequence
 
-```
+```objc
 @interface RACSequence : RACStream <NSCoding, NSCopying, NSFastEnumeration>
 
 @property (nonatomic, strong, readonly) id head;
@@ -237,7 +237,7 @@ RACScheduler的源码分析结束~~
 `RACSequence`有两个很重要的属性就是`head`和`tail`。`head`是一个id，而`tail`又是一个`RACSequence`，这个定义有点递归的意味。
 
 
-```
+```objc
     RACSequence *sequence = [RACSequence sequenceWithHeadBlock:^id{
         return @(1);
     } tailBlock:^RACSequence *{
@@ -262,7 +262,7 @@ sequence.head = 1 , sequence.tail =  <RACArraySequence: 0x608000223920>{ name = 
 
 objectEnumerator是一个快速枚举器。
 
-```
+```objc
 @interface RACSequenceEnumerator : NSEnumerator
 @property (nonatomic, strong) RACSequence *sequence;
 @end
@@ -270,7 +270,7 @@ objectEnumerator是一个快速枚举器。
 
 之所以需要实现这个，是为了更加方便的RACSequence进行遍历。
 
-```
+```objc
 - (id)nextObject {
     id object = nil;
 
@@ -287,7 +287,7 @@ objectEnumerator是一个快速枚举器。
 
 
 
-```
+```objc
 - (NSEnumerator *)objectEnumerator {
     RACSequenceEnumerator *enumerator = [[RACSequenceEnumerator alloc] init];
     enumerator.sequence = self;
@@ -297,7 +297,7 @@ objectEnumerator是一个快速枚举器。
 
 回到RACSequence的定义里面的objectEnumerator，这里就是取出内部的RACSequenceEnumerator。
 
-```
+```objc
 - (NSArray *)array {
     NSMutableArray *array = [NSMutableArray array];
     for (id obj in self) {
@@ -311,7 +311,7 @@ RACSequence的定义里面还有一个array，这个数组就是返回一个NSAr
 
 在分析RACSequence的for-in执行效率之前，先回顾一下NSFastEnumerationState的定义，这里的属性在接下来的实现中会被大量使用。
 
-```
+```objc
 typedef struct {
     unsigned long state; //可以被自定义成任何有意义的变量
     id __unsafe_unretained _Nullable * _Nullable itemsPtr;  //返回对象数组的首地址
@@ -322,7 +322,7 @@ typedef struct {
 
 接下来要分析的这个函数的入参，stackbuf是为for-in提供的对象数组，len是该数组的长度。
 
-```
+```objc
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(__unsafe_unretained id *)stackbuf count:(NSUInteger)len {
     // 定义完成时候的状态为state = ULONG_MAX
     if (state->state == ULONG_MAX) {
@@ -391,7 +391,7 @@ typedef struct {
 
 再来研究研究RACSequence的初始化：
 
-```
+```objc
 + (RACSequence *)sequenceWithHeadBlock:(id (^)(void))headBlock tailBlock:(RACSequence *(^)(void))tailBlock;
 
 + (RACSequence *)sequenceWithHeadBlock:(id (^)(void))headBlock tailBlock:(RACSequence *(^)(void))tailBlock {
@@ -403,7 +403,7 @@ typedef struct {
 
 再来看看RACDynamicSequence的定义。
 
-```
+```objc
 @interface RACDynamicSequence () {
     id _head;
     RACSequence *_tail;
@@ -419,7 +419,7 @@ typedef struct {
 
 这里需要说明的是此处的headBlock，tailBlock，dependencyBlock的修饰符都是用了strong，而不是copy。这里是一个很奇怪的bug导致的。在[ReactiveCocoa](https://github.com/ReactiveCocoa/ReactiveCocoa/issues/505)中详细记录了用copy关键字会导致内存泄露的bug。具体代码如下：
 
-```
+```objc
 [[[@[@1,@2,@3,@4,@5] rac_sequence] filter:^BOOL(id value) {
     return [value intValue] > 1;
 }] array];
@@ -432,7 +432,7 @@ typedef struct {
 
 所以日常我们写block的时候，没有特殊情况，依旧需要继续用copy进行修饰。
 
-```
+```objc
 + (RACSequence *)sequenceWithHeadBlock:(id (^)(void))headBlock tailBlock:(RACSequence *(^)(void))tailBlock {
    NSCParameterAssert(headBlock != nil);
 
@@ -446,7 +446,7 @@ typedef struct {
 
 hasDependency这个变量是代表是否有dependencyBlock。这个函数里面就只把headBlock和tailBlock保存起来了。
 
-```
+```objc
 + (RACSequence *)sequenceWithLazyDependency:(id (^)(void))dependencyBlock headBlock:(id (^)(id dependency))headBlock tailBlock:(RACSequence *(^)(id dependency))tailBlock {
     NSCParameterAssert(dependencyBlock != nil);
     NSCParameterAssert(headBlock != nil);
@@ -481,7 +481,7 @@ hasDependency这个变量是代表是否有dependencyBlock。这个函数里面�
 
 在RACSequence中**积极运算**的代表是RACSequence的一个子类RACArraySequence的子类——RACEagerSequence。它的积极运算表现在其bind函数上。
 
-```
+```objc
 - (instancetype)bind:(RACStreamBindBlock (^)(void))block {
     NSCParameterAssert(block != nil);
     RACStreamBindBlock bindBlock = block();
@@ -514,7 +514,7 @@ hasDependency这个变量是代表是否有dependencyBlock。这个函数里面�
 
 在RACSequence中，bind函数是下面这个样子：
 
-```
+```objc
 - (instancetype)bind:(RACStreamBindBlock (^)(void))block {
     RACStreamBindBlock bindBlock = block();
     return [[self bind:bindBlock passingThroughValuesFromSequence:nil] setNameWithFormat:@"[%@] -bind:", self.name];
@@ -524,7 +524,7 @@ hasDependency这个变量是代表是否有dependencyBlock。这个函数里面�
 实际上调用了bind: passingThroughValuesFromSequence:方法，第二个入参传入nil。
 
 
-```
+```objc
 - (instancetype)bind:(RACStreamBindBlock)bindBlock passingThroughValuesFromSequence:(RACSequence *)passthroughSequence {
 
     __block RACSequence *valuesSeq = self;
@@ -551,7 +551,7 @@ hasDependency这个变量是代表是否有dependencyBlock。这个函数里面�
 
 通过上述源码的分析，可以写出如下的测试代码加深理解。
 
-```
+```objc
 NSArray *array = @[@1,@2,@3,@4,@5];
 
     RACSequence *lazySequence = [array.rac_sequence map:^id(id value) {
@@ -574,7 +574,7 @@ NSArray *array = @[@1,@2,@3,@4,@5];
 
 那如何让lazySequence执行bind闭包呢？
 
-```
+```objc
     [lazySequence array];
 ```
 
@@ -584,7 +584,7 @@ NSArray *array = @[@1,@2,@3,@4,@5];
 
 接下来再继续分析RACSequence是如何实现**惰性求值**的。
 
-```
+```objc
 RACSequence *sequence = [RACDynamicSequence sequenceWithLazyDependency:^ id {
     while (current.head == nil) {
         if (stop) return nil;
@@ -632,7 +632,7 @@ dependencyBlock的目的是为了把原来的sequence里面的值，都进行一
 
 RACDynamicSequence创建的lazyDependency的过程就是保存了3个block的过程。那这些闭包什么时候会被调用呢？
 
-```
+```objc
 - (id)head {
     @synchronized (self) {
         id untypedHeadBlock = self.headBlock;
@@ -659,7 +659,7 @@ RACDynamicSequence创建的lazyDependency的过程就是保存了3个block的过
 
 上面的源码就是获取RACDynamicSequence中head的实现。当要取出sequence的head的时候，就会调用headBlock( )。如果保存了dependencyBlock闭包，在执行headBlock( )之前会先执行dependencyBlock( )进行一次变换。
 
-```
+```objc
 - (RACSequence *)tail {
     @synchronized (self) {
         id untypedTailBlock = self.tailBlock;
